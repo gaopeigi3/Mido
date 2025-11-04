@@ -1,0 +1,170 @@
+这个问题非常适合做一套“机制导向 + 多组学整合 + 预测建模”的组合拳。下面给你一份可直接落地的分析蓝图，分别覆盖单细胞与bulk、成对（pre/post）与分组（耐药/不耐药）、以及围绕“FLT3→(mTOR/RAS/STAT)→MYC”轴与“GSPT1”假说的重点检验。你可以把它当作任务清单逐步推进。
+
+1) 研究设计与对比矩阵
+
+四个 cohort：
+
+Pre-Res（治疗前-耐药）、Pre-NonRes（治疗前-不耐药）
+
+Post-Res（治疗后-耐药）、Post-NonRes（治疗后-不耐药）
+
+建议以“患者”为配对单位做两类对比：
+
+纵向（配对）：Pre vs Post（分别在 Res、NonRes 内部比较）
+
+横向（横截面）：Res vs NonRes（分别在 Pre、Post 时点比较）
+
+交互模型：同时放入“时间 × 耐药”交互项，检验真正与耐药演进相关的分子变化
+
+2) 单细胞数据（scRNA-seq）主线
+2.1 预处理与伪样本
+
+标准流程：质控 → 归一化/批次校正（Harmony/fastMNN/BBKNN）→ 降维/聚类 → 细胞注释（你现成的marker字典/Abbas/Azimuth）。
+
+建议在细胞类型层面做pseudobulk（每个患者×细胞类型×条件），用于稳健差异与配对建模（edgeR/DESeq2/limma-voom 都可）。
+
+同时保留单细胞层面的每细胞评分（见下）。
+
+2.2 “FLT3—mTOR/RAS/STAT—MYC”轴的活动量
+
+围绕机制做先验驱动量化，避免只看基因表达的噪声：
+
+路径活性：PROGENy（mTOR、RAS、JAK/STAT 等）、GSVA/ssGSEA（HALLMARK_MYC_TARGETS_V1/V2、MTORC1_SIGNALING、KRAS_SIGNALING_UP/DN、IL6_JAK_STAT3）。
+
+转录因子活性（强烈推荐）：DoRothEA + VIPER 推断MYC/STAT家族的活性（而不是仅表达）。
+
+激酶活性：KSEA（mTOR/AKT/MEK 等）。
+
+指标落地：对每个细胞 & 每个pseudobulk样本都计算上述分数，后续在配对/分组模型里用这些分数做差异检验。
+
+2.3 差异与统计模型（配对优先）
+
+Pseudobulk-差异：
+
+模型1（纵向）：Post ~ Pre + (1|patient) 或 limma/edgeR 的 ~ patient + condition。
+
+模型2（横向）：Res vs NonRes（在Pre或Post分层）。
+
+模型3（交互）：~ patient + time + status + time:status（检验“治疗×耐药”的交互效应）。
+
+单细胞层面的广义线性/混合效应模型：
+
+例如 score ~ time * status + (1|patient) 分细胞类型跑，患者做随机效应，细胞数足够时可用。
+
+多重校正：FDR（你常用的阈值0.05可保守一点；MYC轴的先验指标可以单独做事先注册的“primary endpoints”）。
+
+2.4 克隆/亚群与微环境
+
+CNV推断：inferCNV、copyKAT 识别拷贝数异常亚群（肿瘤细胞）；观察Res组在治疗后是否某些CNV亚群扩张，并关联MYC活性。
+
+细胞间通讯：CellChat / CellPhoneDB / NicheNet，比较 Pre/Post 与 Res/NonRes 的配体-受体网络，关注能上推JAK/STAT、RAS、mTOR 的外源性信号来源（如TNF/IL6/EGF/FGF等）。
+
+发育轨迹/拟时序：scVelo/Monocle3，把MYC活性沿轨迹作图，观察耐药方向上的动态（例如Post-Res亚群向高MYC端漂移）。
+
+3) bulk RNA-seq（或总量组学）主线
+
+与scRNA一致的对比矩阵与路径/TF活性计算（GSVA/PROGENy/DoRothEA+VIPER/KSEA）。
+
+去卷积（CIBERSORTx / MuSiC / BayesPrism）：反推细胞组成变化并在模型中校正，避免把细胞比例差异误当作分子通路差异。
+
+差异网络/调控重连线：WGCNA（你熟悉）对 Pre vs Post、Res vs NonRes 做模块差异；或在bulk上构网（ARACNe/CLR）→ VIPER做调控蛋白活性对比，检出MYC/STAT/mTOR通路的网络重构。
+
+4) cMYC & GSPT1 假说的“强验证”模块
+
+把你的生物学假说转成几个可量化、可统计检验的预注册指标（primary/secondary endpoints）：
+
+Primary（强检验）
+
+MYC活性（VIPER-DoRothEA 分数）在 Res 组：Post > Pre 且幅度显著高于 NonRes 的变化（交互项显著）。
+
+HALLMARK_MYC_TARGETS 与 MYC直系靶基因集（如经典 E-box 靶）在 Res 组显著上调（pseudobulk与单细胞一致）。
+
+FLT3 表达/活性分数变化与 mTOR/STAT/RAS 活性变化显著正相关；并且这条轴的变化能够解释 MYC 活性变化（中介分析，见下）。
+
+Secondary（支持性）
+4) GSPT1 表达/蛋白稳定性相关基因（CRBN复合体元件如 CRBN/DDB1/CUL4A/B 等）与 MYC/耐药表型的相关性。
+5) 在Post-Res中富集翻译终止/NMD/蛋白降解相关基因集，提示GSPT1轴的可塑性。
+6) 细胞类型特异性：哪一类肿瘤样细胞/祖细胞中出现最强 MYC 上调与耐药共现。
+
+中介模型（建议）
+
+设定：FLT3轴活性变化 → (mTOR/RAS/STAT) → MYC活性变化 → 细胞存续/耐药（临床或体外IC50 proxy）
+
+用结构方程/中介分析（例如 mediation 或 lavaan 在R里），检验中介效应是否显著，形成因果一致的证据链。
+
+5) “联合GT19715”效应的体外转录组映射（如有Perturb数据）
+
+如果你有GT19715处理后的表达数据（或公开perturbation签名）：
+
+Connectivity/反转分析：将Post-Res的MYC上调签名作为“疾病签名”，检查GT19715是否显著反向该签名（fgsea/Rank-biased overlap/通用CMap方法）。
+
+目标轴验证：GT19715处理后，MYC活性是否下调？GSPT1相关基因/通路是否下调？
+
+合成毒性/协同预估：把midostaurin单药与GT19715单药的通路效应向量相加，比较组合数据是否显著超过“可加性”预期（Bliss/Loewe 概念可转为转录组向量角度的“夹角/余弦”检验）。
+
+生物标志物：基线的GSPT1、CRBN轴、MYC活性能否预测组合疗法下的更大“签名反转”幅度。
+
+6) 机器学习建模（以“可解释+小样本稳健”为先）
+6.1 特征工程（尽量“稳定、可解释”）
+
+核心：每个患者/样本（或pseudobulk）提取
+
+TF活性（VIPER）、通路活性（GSVA/PROGENy/KSEA）、CNV负荷/特征、免疫/微环境分数（xCell/EPIC/CIBERSORTx）、关键基因表达（FLT3、MYC、GSPT1、CRBN轴）。
+
+单细胞→样本特征：scFeatures/eciRNA 风格聚合（均值/分位数/高活性细胞比例、亚群比例、极端细胞“尾部分数”）。
+
+纵向特征：Δ（Post-Pre），以及基线特征（Pre）预测Post耐药。
+
+6.2 模型与评估
+
+任务1：预测耐药（二分类，重点用基线Pre特征，避免信息泄漏）。
+
+任务2：预测Post MYC活性上调幅度或组合治疗的签名反转幅度（回归）。
+
+模型：Elastic Net / 线性SVM / XGBoost（配合SHAP解释）。样本量小优先正则化线性。
+
+划分：患者层级分层CV（nested CV），确保同一患者不同时点不跨训练/验证。
+
+指标：AUC/PR-AUC（分类），RMSE/MAE（回归），以及稳定性选择（stability selection）看特征复现性。
+
+解释：SHAP/coef 跟生物轴对齐（MYC/FLT3/GSPT1/STAT/mTOR/RAS应成为“有信号”的特征）。
+
+7) 图形与可复现性清单
+
+纵向raincloud/配对连线图：MYC/通路/TF活性在四组中的变化。
+
+细胞类型热图：每类型的MYC/STAT/mTOR/RAS分数在四组的均值与Δ。
+
+细胞通讯弦图/气泡图：Res vs NonRes 的关键配体-受体对。
+
+CNV亚群堆叠图：Pre→Post 的亚群构成变化与MYC活性叠加。
+
+代码与参数：renv/conda 锁版本，targets/snakemake 流水线化；对比与终点在README中预注册。
+
+8) 工具包速查（R/Python）
+
+归一化/整合：Seurat/Scanpy, Harmony/fastMNN/BBKNN
+
+Pseudobulk差异：edgeR/DESeq2/limma-voom（带配对/阻断因子）
+
+通路/TF/激酶：GSVA、fgsea、PROGENy、DoRothEA+VIPER、KSEA
+
+CNV：inferCNV、copyKAT
+
+通讯：CellChat、CellPhoneDB、NicheNet
+
+去卷积：CIBERSORTx、MuSiC、BayesPrism
+
+轨迹/动力学：Monocle3、scVelo
+
+机器学习：glmnet、caret/tidymodels、xgboost、scikit-learn、shap
+
+你可以先从这三步开始（最小可行集）：
+
+在每个细胞类型上计算：VIPER(MYC/STAT家族) + GSVA(HALLMARK_MYC_TARGETS_V1/V2, MTORC1, KRAS, IL6_JAK_STAT3)。
+
+用pseudobulk在配对模型里做三组对比（纵向/横向/交互），先检验MYC轴是否按假说变化。
+
+在bulk里做去卷积并重复上述分析，确认scRNA与bulk结论一致（或解释差异）。
+
+如果你愿意，我可以按你现有对象结构（Seurat/Scanpy、pseudobulk格式、你之前的VIPER/ARACNe输出）直接给出一版可运行的脚本骨架（R 或 Python 任选），把上面关键指标一次性跑出来并生成图表。
